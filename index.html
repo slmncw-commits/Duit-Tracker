@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>Duit Tracker — Personal Finance Tracker</title>
+<meta name="theme-color" content="#5E1220" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Duit Tracker" />
+
+<!-- Applies the saved dark-mode preference and PIN-lock state before first
+     paint, so the page never flashes light-then-dark, or briefly shows
+     unlocked app content before the lock screen appears. -->
+<script>
+  try {
+    if (localStorage.getItem('duitku-dark-mode') === '1') {
+      document.documentElement.classList.add('dark');
+    }
+    if (localStorage.getItem('duitku-pin-hash')) {
+      document.documentElement.classList.add('pin-locked');
+    }
+  } catch (e) { /* localStorage unavailable — default to light theme, unlocked */ }
+</script>
+
+<!-- jsPDF + AutoTable -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Tailwind CSS — precompiled static build (no CDN/runtime warning) -->
+<link rel="stylesheet" href="css/tailwind.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="text-ink">
+
+<!-- ===================== PIN LOCK SCREEN ===================== -->
+<div id="lock-screen" class="fixed inset-0 z-[100] bg-bg flex-col items-center justify-center px-8">
+  <div class="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 mb-4">
+    <i data-lucide="lock" class="w-7 h-7"></i>
+  </div>
+  <p class="font-display font-bold text-lg text-ink mb-1">Duit Tracker Locked</p>
+  <p class="text-xs text-ink/50 mb-6" id="lock-subtitle">Enter your PIN to continue</p>
+  <form id="lock-form" class="w-full max-w-xs space-y-3">
+    <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="lock-pin-input" autocomplete="off" class="w-full text-center text-2xl rounded-xl border border-primary-100 py-3 bg-white" style="letter-spacing:0.5em" placeholder="····" />
+    <p id="lock-error" class="hidden text-xs text-danger text-center">Incorrect PIN. Try again.</p>
+    <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Unlock</button>
+  </form>
+  <form id="lock-recovery-form" class="hidden w-full max-w-xs space-y-3">
+    <input type="text" id="lock-recovery-input" autocomplete="off" autocapitalize="characters" placeholder="XXXX-XXXX-XXXX-XXXX" class="w-full text-center text-sm uppercase tracking-widest rounded-xl border border-primary-100 py-3 bg-white" />
+    <p id="lock-recovery-error" class="hidden text-xs text-danger text-center">Incorrect recovery code.</p>
+    <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Reset PIN</button>
+    <button type="button" id="lock-recovery-cancel-btn" class="w-full text-ink/40 text-xs font-semibold py-1">Back to PIN entry</button>
+  </form>
+  <button id="forgot-pin-btn" type="button" class="mt-4 text-xs font-semibold text-ink/40 underline">Forgot PIN?</button>
+  <button id="wipe-pin-btn" type="button" class="hidden mt-3 text-[11px] font-semibold text-danger/70 underline text-center max-w-xs">Lost your recovery code too? Reset lock (no verification)</button>
+</div>
+
+<!-- ===================== RECOVERY CODE DISPLAY ===================== -->
+<!-- Deliberately has no data-close backdrop dismissal — only the explicit
+     "I've Saved It" button closes this, since the code is shown exactly
+     once and never recoverable again afterwards. -->
+<div id="recovery-code-modal" class="fixed inset-0 z-[110] hidden">
+  <div class="absolute inset-0 bg-black/60"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="recovery-code-sheet">
+    <div class="px-5 pt-4 pb-2 border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Your Recovery Code</h2>
+    </div>
+    <div class="px-5 py-4 space-y-4">
+      <div class="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 mx-auto">
+        <i data-lucide="lock" class="w-5 h-5"></i>
+      </div>
+      <p class="text-xs text-ink/60 text-center leading-relaxed">Screenshot or write this down now. You'll need it to reset your PIN if you ever forget it. <span class="font-semibold text-ink">This code will not be shown again.</span></p>
+      <div class="bg-white rounded-2xl border-2 border-primary-100 py-4 px-3 text-center">
+        <p id="recovery-code-display" class="font-display font-bold text-xl tracking-widest text-primary-700 select-all"></p>
+      </div>
+      <button id="recovery-code-done-btn" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">I've Saved It</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="max-w-md mx-auto min-h-screen bg-bg relative pb-24 shadow-xl">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <header class="sticky top-0 z-30 bg-bg/90 backdrop-blur px-5 pt-5 pb-2 flex items-center justify-between gap-2">
+    <div class="min-w-0">
+      <p class="text-[11px] uppercase tracking-widest text-primary-600 font-semibold">Duit Tracker</p>
+      <h1 class="font-display text-lg font-bold text-ink -mt-0.5 truncate" id="page-title">Overview</h1>
+    </div>
+    <div class="flex items-center gap-2 min-w-0">
+      <button id="switch-account-btn" class="flex items-center gap-1.5 h-10 max-w-[130px] pl-3 pr-2.5 rounded-full bg-white border border-primary-100 text-primary-700 active:scale-95 transition shrink-0">
+        <span id="header-account-name" class="text-xs font-semibold truncate">—</span>
+        <i data-lucide="switch" class="w-4 h-4 shrink-0"></i>
+      </button>
+      <button id="menu-btn" class="w-10 h-10 rounded-full bg-white border border-primary-100 flex items-center justify-center text-primary-700 active:scale-95 transition shrink-0">
+        <i data-lucide="menu" class="w-5 h-5"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===================== HOME VIEW ===================== -->
+  <section id="home-view" class="view active px-5 space-y-5">
+
+    <!-- Balance Banner -->
+    <div class="relative overflow-hidden rounded-3xl p-5 text-white shadow-lg batik-pattern" style="background:linear-gradient(135deg,#3D0C14,#7A1B29 70%);">
+      <p id="balance-label" class="text-xs uppercase tracking-widest text-primary-100/80 font-semibold">No Account Yet</p>
+      <p class="font-display text-3xl font-bold mt-1" id="total-balance">RM 0.00</p>
+      <div class="flex gap-4 mt-4 text-xs">
+        <div class="flex items-center gap-1.5"><i data-lucide="arrow-down-circle" class="w-4 h-4 text-emerald-300"></i><span id="total-income" class="font-semibold">RM 0.00</span><span class="text-primary-100/70">in</span></div>
+        <div class="flex items-center gap-1.5"><i data-lucide="arrow-up-circle" class="w-4 h-4 text-rose-300"></i><span id="total-expense" class="font-semibold">RM 0.00</span><span class="text-primary-100/70">out</span></div>
+      </div>
+    </div>
+
+    <!-- Monthly Budget -->
+    <!-- Combined Budgets box: Total Budget (tappable) on top, Category
+         Budgets below within the same card — merged per request. -->
+    <div class="bg-white rounded-2xl border border-primary-100 overflow-hidden">
+      <button id="budget-card-btn" class="w-full p-4 text-left active:bg-primary-50/60 transition">
+        <div id="budget-empty-state" class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0">
+            <i data-lucide="target" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <p class="text-sm font-semibold">Set a Total Budget</p>
+            <p class="text-xs text-ink/45">Track spending against a monthly limit</p>
+          </div>
+        </div>
+        <div id="budget-set-state" class="hidden">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Total Budget</p>
+            <p id="budget-amounts" class="text-xs font-semibold text-ink/70">RM 0.00 / RM 0.00</p>
+          </div>
+          <div class="w-full h-2 rounded-full bg-primary-50 overflow-hidden">
+            <div id="budget-progress-bar" class="h-full rounded-full transition-all" style="width:0%"></div>
+          </div>
+          <p id="budget-status-text" class="text-[11px] text-ink/45 mt-1.5"></p>
+        </div>
+      </button>
+
+      <!-- Per-Category Budget Progress (only shown when at least one is set) -->
+      <div id="category-budget-section" class="hidden border-t border-primary-100 p-4">
+        <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide mb-3">Category Budgets</p>
+        <div id="category-budget-list" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- Upcoming bills: recurring expenses due in the next 7 days -->
+    <div id="upcoming-section" class="hidden bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center gap-1.5 mb-3">
+        <i data-lucide="bell" class="w-3.5 h-3.5 text-primary-700"></i>
+        <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Upcoming Bills</p>
+      </div>
+      <div id="upcoming-list" class="space-y-2"></div>
+    </div>
+
+    <!-- This month vs the same point last month -->
+    <div id="compare-section" class="hidden bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center gap-1.5 mb-3">
+        <i data-lucide="trending-up" class="w-3.5 h-3.5 text-primary-700"></i>
+        <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">This Month vs Last Month</p>
+      </div>
+      <div class="flex items-end justify-between gap-2">
+        <div>
+          <p class="text-[10px] uppercase tracking-wide text-ink/45 font-semibold">Spent so far</p>
+          <p id="compare-this" class="font-display font-bold text-lg mt-0.5 text-ink">RM 0.00</p>
+        </div>
+        <p id="compare-pct" class="text-sm font-bold shrink-0"></p>
+      </div>
+      <p id="compare-note" class="text-[11px] text-ink/45 mt-1.5"></p>
+      <div id="compare-cats" class="space-y-1.5 mt-3 pt-3 border-t border-primary-100"></div>
+    </div>
+
+    <!-- Savings goals (only shown once at least one goal exists) -->
+    <div id="goals-home-section" class="hidden bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-1.5">
+          <i data-lucide="target" class="w-3.5 h-3.5 text-primary-700"></i>
+          <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Savings Goals</p>
+        </div>
+        <button id="goals-home-manage-btn" class="text-xs font-semibold text-primary-700">Manage</button>
+      </div>
+      <div id="goals-home-list" class="space-y-3"></div>
+    </div>
+  </section>
+
+  <!-- ===================== ACTIVITY VIEW (transaction list) ===================== -->
+  <section id="activity-view" class="view px-5">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-sm font-semibold text-ink/70">Recent Activity</h2>
+      <button id="search-tx-btn" class="w-7 h-7 rounded-full bg-white border border-primary-100 flex items-center justify-center text-primary-700 active:scale-95 transition">
+        <i data-lucide="search" class="w-3.5 h-3.5"></i>
+      </button>
+    </div>
+    <div id="transaction-list" class="space-y-2"></div>
+    <div id="empty-state" class="hidden text-center py-10 text-ink/40">
+      <i data-lucide="inbox" class="w-9 h-9 mx-auto mb-2"></i>
+      <p id="empty-state-text" class="text-sm">No transactions yet. Tap "Add Transaction" to start.</p>
+    </div>
+  </section>
+
+  <!-- ===================== REPORTS VIEW ===================== -->
+  <section id="reports-view" class="view px-5 space-y-4">
+    <div class="flex items-center gap-1.5 px-1">
+      <i data-lucide="wallet" class="w-3.5 h-3.5 text-ink/40"></i>
+      <p class="text-xs text-ink/50">Statement for <span id="report-account-label" class="font-semibold text-ink/70">—</span></p>
+    </div>
+
+    <div class="bg-white rounded-2xl border border-primary-100 p-4 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Month</label>
+          <select id="report-month" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-bg"></select>
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Year</label>
+          <select id="report-year" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-bg"></select>
+        </div>
+      </div>
+      <button id="generate-pdf-btn" class="w-full bg-primary-700 text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 active:scale-[.98] transition">
+        <i data-lucide="file-down" class="w-4 h-4"></i> Generate PDF Statement
+      </button>
+      <button id="export-csv-btn" class="w-full bg-white border border-primary-100 text-primary-700 rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 active:scale-[.98] transition">
+        <i data-lucide="table" class="w-4 h-4"></i> Export CSV
+      </button>
+    </div>
+
+    <!-- Statement Summary -->
+    <div class="bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[10px] uppercase tracking-wide text-ink/45 font-semibold">Brought Forward</p>
+          <p id="stat-opening" class="font-display font-bold text-lg mt-0.5 text-ink">RM 0.00</p>
+        </div>
+        <i data-lucide="arrow-right" class="w-4 h-4 text-ink/25 shrink-0"></i>
+        <div class="text-right">
+          <p class="text-[10px] uppercase tracking-wide text-ink/45 font-semibold">Carried Forward</p>
+          <p id="stat-closing" class="font-display font-bold text-lg mt-0.5 text-primary-700">RM 0.00</p>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mt-3 pt-3 border-t border-primary-100 text-xs">
+        <span class="flex items-center gap-1.5 text-emerald-600 font-semibold"><i data-lucide="arrow-down-circle" class="w-3.5 h-3.5"></i>In <span id="stat-income">RM 0.00</span></span>
+        <span class="flex items-center gap-1.5 text-rose-600 font-semibold"><i data-lucide="arrow-up-circle" class="w-3.5 h-3.5"></i>Out <span id="stat-expense">RM 0.00</span></span>
+      </div>
+      <div id="stat-transfer-row" class="hidden flex items-center justify-between mt-2 text-xs text-ink/50">
+        <span class="flex items-center gap-1.5"><i data-lucide="switch" class="w-3.5 h-3.5"></i>Transfers (not counted as in/out)</span>
+        <span id="stat-transfer" class="font-semibold">RM 0.00</span>
+      </div>
+    </div>
+
+    <!-- Spending Trend (last 6 months, current account) -->
+    <div class="bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center gap-1.5 mb-3">
+        <i data-lucide="trending-up" class="w-3.5 h-3.5 text-primary-700"></i>
+        <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Spending Trend — Last 6 Months</p>
+      </div>
+      <div id="spending-trend-bars" class="flex items-end justify-between gap-2" style="height:96px"></div>
+    </div>
+
+    <!-- Spending by Category (respects the Month/Year filters above) -->
+    <div class="bg-white rounded-2xl border border-primary-100 p-4">
+      <div class="flex items-center gap-1.5 mb-3">
+        <i data-lucide="target" class="w-3.5 h-3.5 text-primary-700"></i>
+        <p class="text-xs font-semibold text-ink/60 uppercase tracking-wide">Spending by Category</p>
+      </div>
+      <div id="category-breakdown-list" class="space-y-3"></div>
+    </div>
+  </section>
+
+  <!-- ===================== ACCOUNTS VIEW ===================== -->
+  <section id="accounts-view" class="view px-5 space-y-4">
+    <button id="open-new-account-modal-btn" class="w-full flex items-center justify-center gap-2 bg-primary-700 text-white rounded-2xl py-3 text-sm font-semibold active:scale-[.98] transition">
+      <i data-lucide="plus" class="w-4 h-4"></i> Create New Account
+    </button>
+
+    <div>
+      <h3 class="text-sm font-semibold text-ink/70 mb-2">Your Accounts</h3>
+      <div id="accounts-list" class="space-y-2"></div>
+    </div>
+  </section>
+
+  <!-- ===================== TRANSFER VIEW ===================== -->
+  <section id="transfer-view" class="view px-5">
+    <div id="transfer-empty-state" class="hidden flex-col items-center justify-center text-center py-20">
+      <div class="w-14 h-14 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 mb-3">
+        <i data-lucide="switch" class="w-6 h-6"></i>
+      </div>
+      <p class="text-sm font-semibold text-ink/70">Transfer Between Accounts</p>
+      <p class="text-xs mt-1 max-w-[220px] text-ink/40 mx-auto">Create at least 2 accounts to transfer money between them.</p>
+    </div>
+
+    <form id="transfer-form" class="bg-white rounded-2xl border border-primary-100 p-4 space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">From</label>
+        <select required id="transfer-from" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white"></select>
+      </div>
+      <div class="flex justify-center -my-1">
+        <div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700">
+          <i data-lucide="switch" class="w-4 h-4"></i>
+        </div>
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">To</label>
+        <select required id="transfer-to" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white"></select>
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount (RM)</label>
+        <input required type="number" step="0.01" min="0.01" id="transfer-amount" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Note (optional)</label>
+        <input type="text" id="transfer-note" placeholder="e.g. Monthly savings" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition mt-1">Transfer</button>
+    </form>
+  </section>
+
+  <!-- ===================== BOTTOM NAV ===================== -->
+  <nav class="fixed bottom-0 left-0 right-0 z-30">
+    <div class="max-w-md mx-auto bg-white border-t border-primary-100 px-6 py-2.5 flex items-center justify-between relative">
+      <button class="tab-btn active-tab flex flex-col items-center gap-1 text-ink/40 w-16" data-view="home-view">
+        <span class="tab-icon w-8 h-8 rounded-full flex items-center justify-center"><i data-lucide="home" class="w-4 h-4"></i></span>
+        <span class="text-[10px] font-semibold">Home</span>
+      </button>
+      <button class="tab-btn flex flex-col items-center gap-1 text-ink/40 w-16" data-view="activity-view">
+        <span class="tab-icon w-8 h-8 rounded-full flex items-center justify-center"><i data-lucide="inbox" class="w-4 h-4"></i></span>
+        <span class="text-[10px] font-semibold">Activity</span>
+      </button>
+      <button id="fab-add" class="w-14 h-14 rounded-full bg-primary-700 text-white flex items-center justify-center shadow-lg -mt-8 border-4 border-bg active:scale-95 transition">
+        <i data-lucide="plus" class="w-6 h-6"></i>
+      </button>
+      <button class="tab-btn flex flex-col items-center gap-1 text-ink/40 w-16" data-view="reports-view">
+        <span class="tab-icon w-8 h-8 rounded-full flex items-center justify-center"><i data-lucide="file-bar-chart" class="w-4 h-4"></i></span>
+        <span class="text-[10px] font-semibold">Reports</span>
+      </button>
+      <button id="more-tab-btn" class="tab-btn flex flex-col items-center gap-1 text-ink/40 w-16">
+        <span class="tab-icon w-8 h-8 rounded-full flex items-center justify-center"><i data-lucide="more-horizontal" class="w-4 h-4"></i></span>
+        <span class="text-[10px] font-semibold">More</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<!-- ===================== ADD TRANSACTION MODAL ===================== -->
+<div id="record-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="record-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[92vh] flex flex-col" id="record-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg" id="record-modal-title">Add Transaction</h2>
+      <button data-close="record-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="record-form" class="px-5 py-4 space-y-4 overflow-y-auto">
+      <input type="hidden" id="record-id" />
+
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" data-type="expense" class="type-btn rounded-xl py-2.5 text-sm font-semibold border-2 border-rose-400 text-rose-700 bg-rose-200">Out</button>
+        <button type="button" data-type="income" class="type-btn rounded-xl py-2.5 text-sm font-semibold border-2 border-primary-100 text-ink/50">In</button>
+      </div>
+      <input type="hidden" id="record-type" value="expense" />
+
+      <div class="flex items-center gap-1.5 -mt-1">
+        <i data-lucide="wallet" class="w-3.5 h-3.5 text-ink/40"></i>
+        <p class="text-xs text-ink/50">Recording to <span id="record-account-label" class="font-semibold text-ink/70">—</span></p>
+      </div>
+
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Category (optional)</label>
+        <button type="button" id="record-category-btn" class="w-full mt-1 flex items-center gap-2.5 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white text-left">
+          <span id="record-category-icon-wrap" class="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="tag" class="w-3.5 h-3.5"></i></span>
+          <span id="record-category-label" class="flex-1 text-ink/70">Uncategorized</span>
+          <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/30"></i>
+        </button>
+        <input type="hidden" id="record-category-id" value="" />
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount (RM)</label>
+          <input required type="number" step="0.01" min="0" id="record-amount" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Date &amp; Time</label>
+          <input required type="datetime-local" id="record-datetime" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+        </div>
+      </div>
+
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Purpose / Note</label>
+        <input type="text" id="record-note" placeholder="e.g. Lunch with family" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Receipts</label>
+        <label for="record-receipts" class="mt-1 flex items-center justify-center gap-2 border-2 border-dashed border-primary-100 rounded-xl py-4 text-sm text-primary-600 font-medium cursor-pointer bg-white">
+          <i data-lucide="camera" class="w-4 h-4"></i> Scan / Upload Receipt(s)
+        </label>
+        <input type="file" id="record-receipts" accept="image/*" multiple capture="environment" class="hidden" />
+        <p id="receipt-processing" class="text-xs text-primary-600 mt-1 hidden">Processing images…</p>
+        <div id="receipt-preview" class="grid grid-cols-4 gap-2 mt-2"></div>
+      </div>
+
+      <button type="submit" id="record-submit-btn" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition sticky bottom-2">Save Transaction</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== TRANSACTION DETAIL MODAL ===================== -->
+<div id="detail-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="detail-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[88vh] flex flex-col" id="detail-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Transaction Detail</h2>
+      <button data-close="detail-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div id="detail-content" class="px-5 py-4 space-y-4 overflow-y-auto"></div>
+  </div>
+</div>
+
+<!-- ===================== RECEIPT VIEWER (full-size, undistorted) ===================== -->
+<div id="receipt-viewer" class="fixed inset-0 z-[60] hidden bg-black/90 flex items-center justify-center p-4" data-close="receipt-viewer">
+  <button data-close="receipt-viewer" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/15 text-white flex items-center justify-center"><i data-lucide="x" class="w-5 h-5"></i></button>
+  <img id="receipt-viewer-img" src="" class="max-w-full max-h-full object-contain rounded-lg" />
+</div>
+
+<!-- ===================== RECURRING TRANSACTIONS MODAL ===================== -->
+<div id="recurring-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="recurring-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="recurring-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Recurring Transactions</h2>
+      <button data-close="recurring-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 overflow-y-auto space-y-4">
+      <p class="text-xs text-ink/45" id="recurring-account-label">For Maybank</p>
+      <div id="recurring-list" class="space-y-2"></div>
+      <form id="recurring-form" class="bg-white rounded-2xl border border-primary-100 p-4 space-y-3">
+        <p class="text-sm font-semibold">Add Recurring</p>
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" data-type="expense" class="recurring-type-btn rounded-xl py-2 text-sm font-semibold border-2 border-rose-400 text-rose-700 bg-rose-200">Out</button>
+          <button type="button" data-type="income" class="recurring-type-btn rounded-xl py-2 text-sm font-semibold border-2 border-primary-100 text-ink/50">In</button>
+        </div>
+        <input type="hidden" id="recurring-type" value="expense" />
+
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Frequency</label>
+          <select id="recurring-frequency" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly" selected>Monthly</option>
+          </select>
+        </div>
+
+        <div id="recurring-weekday-wrap" class="hidden">
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Day of Week</label>
+          <select id="recurring-weekday" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white">
+            <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option>
+            <option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
+            <option value="0">Sunday</option>
+          </select>
+        </div>
+        <div id="recurring-monthday-wrap">
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Day of Month</label>
+          <select id="recurring-day" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white"></select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount (RM)</label>
+            <input required type="number" step="0.01" min="0.01" id="recurring-amount" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Time</label>
+            <input required type="time" id="recurring-time" value="09:00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+          </div>
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Note</label>
+          <input type="text" id="recurring-note" placeholder="e.g. Rent" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+        </div>
+        <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-2.5 text-sm font-semibold active:scale-[.98] transition">Add Recurring</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CATEGORY PICKER MODAL ===================== -->
+<div id="category-picker-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="category-picker-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[80vh] flex flex-col" id="category-picker-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Choose Category</h2>
+      <button data-close="category-picker-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 overflow-y-auto">
+      <div id="category-picker-grid" class="grid grid-cols-4 gap-3"></div>
+      <button id="category-add-new-btn" type="button" class="w-full flex items-center justify-center gap-2 border-2 border-dashed border-primary-100 rounded-xl py-3 mt-4 text-sm font-semibold text-primary-600 active:scale-[.98] transition">
+        <i data-lucide="plus" class="w-4 h-4"></i> Add Category
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MANAGE CATEGORIES MODAL ===================== -->
+<div id="category-manage-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="category-manage-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="category-manage-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Manage Categories</h2>
+      <button data-close="category-manage-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-3">
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" data-type="expense" class="category-manage-filter-btn rounded-xl py-2 text-sm font-semibold border-2 border-rose-400 text-rose-700 bg-rose-200">Out</button>
+        <button type="button" data-type="income" class="category-manage-filter-btn rounded-xl py-2 text-sm font-semibold border-2 border-primary-100 text-ink/50">In</button>
+      </div>
+    </div>
+    <div class="px-5 pb-5 overflow-y-auto space-y-2">
+      <div id="category-manage-list" class="space-y-2"></div>
+      <button id="category-manage-add-btn" type="button" class="w-full flex items-center justify-center gap-2 border-2 border-dashed border-primary-100 rounded-xl py-3 mt-2 text-sm font-semibold text-primary-600 active:scale-[.98] transition">
+        <i data-lucide="plus" class="w-4 h-4"></i> Add Category
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MANAGE BUDGETS MODAL ===================== -->
+<div id="budget-manage-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="budget-manage-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="budget-manage-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Manage Budgets</h2>
+      <button data-close="budget-manage-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="budget-manage-form" class="px-5 py-4 overflow-y-auto space-y-4">
+      <p class="text-xs text-ink/45" id="budget-manage-account-label">For Maybank</p>
+      <div>
+        <p class="text-[11px] font-semibold text-ink/60 uppercase mb-2">Total Budget (RM)</p>
+        <input type="number" step="0.01" min="0" id="budget-manage-overall-input" placeholder="No limit set" class="w-full rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <div>
+        <p class="text-[11px] font-semibold text-ink/60 uppercase mb-2">Per-Category Monthly Budgets (RM)</p>
+        <div id="budget-manage-category-list" class="space-y-2"></div>
+      </div>
+      <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Save Budgets</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== PRO UPSELL MODAL ===================== -->
+<!-- NOTE: no real payment processor is wired up here — "Unlock Pro" only
+     flips a local demo flag. Real billing (Stripe, Play Billing, etc.)
+     would need to replace pro-unlock-demo-btn's handler. -->
+<div id="pro-upsell-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="pro-upsell-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="pro-upsell-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Duit Tracker Pro</h2>
+      <button data-close="pro-upsell-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 space-y-4">
+      <div class="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 mx-auto"><i data-lucide="sparkles" class="w-5 h-5"></i></div>
+      <p class="text-sm text-ink/70 text-center">Unlock 20+ extra category icons — travel, gym, pets, subscriptions, and more.</p>
+      <button id="pro-unlock-demo-btn" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Unlock Pro (Demo)</button>
+      <p class="text-[11px] text-ink/40 text-center">Payment isn't wired up yet — this just flips a local flag for testing.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== ADD CATEGORY MODAL ===================== -->
+<div id="category-add-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="category-add-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="category-add-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg" id="category-add-modal-title">Add Category</h2>
+      <button data-close="category-add-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="category-add-form" class="px-5 py-4 space-y-3 overflow-y-auto">
+      <input type="hidden" id="category-edit-id" value="" />
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" data-type="expense" class="category-type-btn rounded-xl py-2 text-sm font-semibold border-2 border-rose-400 text-rose-700 bg-rose-200">Out</button>
+        <button type="button" data-type="income" class="category-type-btn rounded-xl py-2 text-sm font-semibold border-2 border-primary-100 text-ink/50">In</button>
+      </div>
+      <input type="hidden" id="category-type-input" value="expense" />
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Name</label>
+        <input required type="text" id="category-name-input" placeholder="e.g. Groceries" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Icon</label>
+        <div id="category-icon-grid" class="grid grid-cols-6 gap-2 mt-1"></div>
+        <input type="hidden" id="category-icon-input" value="tag" />
+      </div>
+      <button type="submit" id="category-add-submit-btn" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition mt-1">Save Category</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== SET BUDGET MODAL ===================== -->
+<div id="budget-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="budget-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="budget-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Total Budget</h2>
+      <button data-close="budget-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="budget-form" class="px-5 py-4 space-y-3">
+      <p class="text-xs text-ink/45" id="budget-modal-account-label">For Maybank</p>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Monthly Limit (RM)</label>
+        <input required type="number" step="0.01" min="0.01" id="budget-input" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition mt-1">Save Budget</button>
+      <button type="button" id="budget-remove-btn" class="hidden w-full text-rose-600 text-sm font-semibold py-2">Remove Budget</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== SEARCH TRANSACTIONS MODAL ===================== -->
+<div id="search-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="search-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="search-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Search Transactions</h2>
+      <button data-close="search-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-3">
+      <div class="relative">
+        <i data-lucide="search" class="w-4 h-4 text-ink/35 absolute left-3 top-1/2 -translate-y-1/2"></i>
+        <input type="text" id="search-input" placeholder="Search by note or amount" class="w-full rounded-xl border border-primary-100 pl-9 pr-3 py-2.5 text-sm bg-white" />
+      </div>
+    </div>
+    <div id="search-results" class="px-5 pb-5 space-y-2 overflow-y-auto"></div>
+  </div>
+</div>
+
+<!-- ===================== PIN LOCK SETUP MODAL ===================== -->
+<div id="pin-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="pin-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="pin-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg" id="pin-modal-title">Set PIN Lock</h2>
+      <button data-close="pin-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="pin-form" class="px-5 py-4 space-y-3">
+      <p class="text-[11px] text-ink/50 leading-relaxed">The PIN hides the app on this device. It does not encrypt your data, so keep your device itself locked too.</p>
+      <div id="pin-current-wrap" class="hidden">
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Current PIN</label>
+        <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" id="pin-current" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white tracking-widest" placeholder="····" />
+      </div>
+      <div id="pin-new-wrap">
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">New PIN (4–6 digits)</label>
+        <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" id="pin-new" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white tracking-widest" placeholder="····" />
+      </div>
+      <div id="pin-confirm-wrap">
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Confirm New PIN</label>
+        <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" id="pin-confirm" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white tracking-widest" placeholder="····" />
+      </div>
+      <button type="submit" id="pin-submit-btn" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition mt-1">Set PIN</button>
+      <button type="button" id="pin-remove-btn" class="hidden w-full text-rose-600 text-sm font-semibold py-2">Remove PIN Lock</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== MORE SHEET (all destinations + roadmap) ===================== -->
+<div id="more-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="more-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="more-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">More</h2>
+      <button data-close="more-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 overflow-y-auto space-y-5">
+
+      <div>
+        <p class="text-xs text-ink/45 px-1 mb-2">Manage</p>
+        <div class="space-y-2">
+          <button id="more-manage-accounts-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="wallet" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Manage Accounts</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="manage-categories-open-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="tag" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Manage Categories</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="manage-budgets-open-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="target" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Manage Budgets</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="recurring-open-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="repeat" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Recurring Transactions</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="more-transfer-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="switch" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Transfer Between Accounts</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="more-goals-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="target" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Savings Goals</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+          <button id="more-csv-import-btn" class="more-feature-btn w-full flex items-center gap-3 bg-white rounded-2xl px-4 py-3 border border-primary-100 active:scale-[.98] transition text-left">
+            <div class="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 shrink-0"><i data-lucide="table" class="w-4 h-4"></i></div>
+            <span class="flex-1 text-sm font-semibold">Import Bank Statement (CSV)</span>
+            <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-ink/25"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== SAVINGS GOALS MODAL ===================== -->
+<div id="goals-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="goals-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[85vh] flex flex-col" id="goals-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Savings Goals</h2>
+      <button data-close="goals-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 overflow-y-auto space-y-4">
+      <p class="text-[11px] text-ink/50 leading-relaxed">Track what you're saving towards. Money added here is a record of progress only — it doesn't move money between your accounts.</p>
+      <div id="goals-list" class="space-y-2"></div>
+      <form id="goal-form" class="bg-white rounded-2xl border border-primary-100 p-4 space-y-3">
+        <p class="text-sm font-semibold">Add Goal</p>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Goal Name</label>
+          <input required type="text" id="goal-name" placeholder="e.g. Raya fund" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Target (RM)</label>
+            <input required type="number" step="0.01" min="0.01" id="goal-target" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Saved So Far</label>
+            <input type="number" step="0.01" min="0" id="goal-saved" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+          </div>
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-ink/60 uppercase">Target Date (optional)</label>
+          <input type="date" id="goal-deadline" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+        </div>
+        <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-2.5 text-sm font-semibold active:scale-[.98] transition">Add Goal</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== GOAL CONTRIBUTION MODAL ===================== -->
+<div id="goal-contribute-modal" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="goal-contribute-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="goal-contribute-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg" id="goal-contribute-title">Update Savings</h2>
+      <button data-close="goal-contribute-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="goal-contribute-form" class="px-5 py-4 space-y-3">
+      <input type="hidden" id="goal-contribute-id" />
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" data-mode="add" class="goal-mode-btn rounded-xl py-2.5 text-sm font-semibold border-2 border-emerald-400 text-emerald-700 bg-emerald-200">Add</button>
+        <button type="button" data-mode="withdraw" class="goal-mode-btn rounded-xl py-2.5 text-sm font-semibold border-2 border-primary-100 text-ink/50">Withdraw</button>
+      </div>
+      <input type="hidden" id="goal-contribute-mode" value="add" />
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount (RM)</label>
+        <input required type="number" step="0.01" min="0.01" id="goal-contribute-amount" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Save</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== CSV IMPORT MODAL ===================== -->
+<div id="csv-import-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="csv-import-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[92vh] flex flex-col" id="csv-import-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Import Bank Statement</h2>
+      <button data-close="csv-import-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="px-5 py-4 overflow-y-auto space-y-4">
+      <p class="text-xs text-ink/50 leading-relaxed">Download your statement as CSV from your bank's website (Maybank2u, CIMB Clicks, etc.), then pick it here. Rows are added to <span id="csv-account-label" class="font-semibold text-ink/70">—</span>. Rows already in the app are skipped.</p>
+      <label for="csv-file" class="flex items-center justify-center gap-2 border-2 border-dashed border-primary-100 rounded-xl py-4 text-sm text-primary-600 font-medium cursor-pointer bg-white">
+        <i data-lucide="upload" class="w-4 h-4"></i> <span id="csv-file-label">Choose CSV File</span>
+      </label>
+      <input type="file" id="csv-file" accept=".csv,text/csv,text/plain" class="hidden" />
+
+      <div id="csv-mapping" class="hidden space-y-3">
+        <div class="bg-white rounded-2xl border border-primary-100 p-4 space-y-3">
+          <p class="text-sm font-semibold">Match the columns</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] font-semibold text-ink/60 uppercase">Date</label>
+              <select id="csv-col-date" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white"></select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-ink/60 uppercase">Date Format</label>
+              <select id="csv-date-format" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white">
+                <option value="DMY">DD/MM/YYYY</option>
+                <option value="YMD">YYYY-MM-DD</option>
+                <option value="MDY">MM/DD/YYYY</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Description</label>
+            <select id="csv-col-desc" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white"></select>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount Columns</label>
+            <select id="csv-amount-mode" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white">
+              <option value="single">One column (negative = money out)</option>
+              <option value="split">Separate Debit / Credit columns</option>
+            </select>
+          </div>
+          <div id="csv-single-wrap">
+            <label class="text-[11px] font-semibold text-ink/60 uppercase">Amount</label>
+            <select id="csv-col-amount" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white"></select>
+          </div>
+          <div id="csv-split-wrap" class="hidden grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[11px] font-semibold text-ink/60 uppercase">Debit (Out)</label>
+              <select id="csv-col-debit" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white"></select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-ink/60 uppercase">Credit (In)</label>
+              <select id="csv-col-credit" class="csv-map w-full mt-1 rounded-xl border border-primary-100 px-3 py-2 text-sm bg-white"></select>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <p class="text-[11px] font-semibold text-ink/60 uppercase mb-2">Preview</p>
+          <div id="csv-preview" class="space-y-2"></div>
+          <p id="csv-summary" class="text-xs text-ink/50 mt-2"></p>
+        </div>
+        <button id="csv-import-btn" type="button" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition">Import</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== NEW ACCOUNT MODAL ===================== -->
+<div id="new-account-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="new-account-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full flex flex-col" id="new-account-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Create New Account</h2>
+      <button data-close="new-account-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <form id="new-account-form" class="px-5 py-4 space-y-3">
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Account Name</label>
+        <input required type="text" id="acc-name" placeholder="e.g. Akaun Surau" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <div>
+        <label class="text-[11px] font-semibold text-ink/60 uppercase">Initial Balance (RM)</label>
+        <input required type="number" step="0.01" id="acc-balance" placeholder="0.00" class="w-full mt-1 rounded-xl border border-primary-100 px-3 py-2.5 text-sm bg-white" />
+      </div>
+      <button type="submit" class="w-full bg-primary-700 text-white rounded-xl py-3 text-sm font-semibold active:scale-[.98] transition mt-1">Create Account</button>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== SWITCH ACCOUNT MODAL ===================== -->
+<div id="switch-modal" class="fixed inset-0 z-40 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="switch-modal"></div>
+  <div class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-bg rounded-t-3xl sheet translate-y-full max-h-[80vh] flex flex-col" id="switch-sheet">
+    <div class="px-5 pt-4 pb-2 flex items-center justify-between border-b border-primary-100">
+      <h2 class="font-display font-bold text-lg">Switch Account</h2>
+      <button data-close="switch-modal" class="w-8 h-8 rounded-full bg-white flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div id="switch-list" class="px-5 py-4 space-y-2 overflow-y-auto"></div>
+    <div class="px-5 pb-5 pt-1">
+      <button id="switch-new-account-btn" class="w-full flex items-center justify-center gap-2 border-2 border-dashed border-primary-100 rounded-xl py-3 text-sm font-semibold text-primary-600 active:scale-[.98] transition">
+        <i data-lucide="plus" class="w-4 h-4"></i> Create New Account
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== SIDE MENU (Backup / Settings) ===================== -->
+<div id="side-menu" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 modal-backdrop" data-close="side-menu"></div>
+  <div class="absolute top-0 right-0 h-full w-72 bg-white shadow-2xl sheet translate-x-full flex flex-col" id="side-sheet">
+    <div class="px-5 pt-6 pb-4 border-b border-primary-100 flex items-center justify-between">
+      <h2 class="font-display font-bold text-lg">Settings</h2>
+      <button data-close="side-menu" class="w-8 h-8 rounded-full bg-bg flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="p-5 space-y-3 overflow-y-auto">
+      <p class="text-[11px] font-semibold text-ink/50 uppercase">Preferences</p>
+      <div class="w-full flex items-center justify-between bg-bg rounded-xl px-4 py-3">
+        <span class="flex items-center gap-3 text-sm font-semibold text-ink">
+          <i data-lucide="moon" class="w-4 h-4 text-primary-700"></i> Dark Mode
+        </span>
+        <button id="dark-mode-toggle" type="button" role="switch" aria-checked="false" class="relative w-11 h-6 rounded-full bg-primary-100 transition-colors shrink-0">
+          <span id="dark-mode-toggle-knob" class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform"></span>
+        </button>
+      </div>
+
+      <div class="w-full flex items-center justify-between gap-3 bg-bg rounded-xl px-4 py-3">
+        <span class="text-sm font-semibold text-ink">Language</span>
+        <select id="language-select" class="rounded-xl border border-primary-100 px-2 py-1.5 text-sm bg-white">
+          <option value="en">English</option>
+          <option value="ms">Bahasa Melayu</option>
+        </select>
+      </div>
+
+      <p class="text-[11px] font-semibold text-ink/50 uppercase pt-2">Security</p>
+      <button id="pin-lock-btn" class="w-full flex items-center gap-3 bg-bg rounded-xl px-4 py-3 text-sm font-semibold text-ink active:scale-[.98] transition">
+        <i data-lucide="lock" class="w-4 h-4 text-primary-700"></i> <span id="pin-lock-label">Set PIN Lock</span>
+      </button>
+
+      <p class="text-[11px] font-semibold text-ink/50 uppercase pt-2">Data Backup</p>
+      <p id="backup-status-text" class="text-xs text-ink/45 px-1 -mt-1">Last backup: Never</p>
+      <button id="export-btn" class="w-full flex items-center gap-3 bg-bg rounded-xl px-4 py-3 text-sm font-semibold text-ink active:scale-[.98] transition">
+        <i data-lucide="download" class="w-4 h-4 text-primary-700"></i> Export Backup (.json)
+      </button>
+      <label for="import-file" class="w-full flex items-center gap-3 bg-bg rounded-xl px-4 py-3 text-sm font-semibold text-ink active:scale-[.98] transition cursor-pointer">
+        <i data-lucide="upload" class="w-4 h-4 text-primary-700"></i> Import Backup (.json)
+      </label>
+      <input type="file" id="import-file" accept="application/json" class="hidden" />
+      <div class="w-full flex items-center justify-between bg-bg rounded-xl px-4 py-3">
+        <span class="flex items-center gap-3 text-sm font-semibold text-ink">
+          <i data-lucide="bell" class="w-4 h-4 text-primary-700"></i> Remind Me to Backup
+        </span>
+        <button id="backup-reminder-toggle" type="button" role="switch" aria-checked="true" class="relative w-11 h-6 rounded-full bg-primary-700 transition-colors shrink-0">
+          <span id="backup-reminder-toggle-knob" class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform translate-x-5"></span>
+        </button>
+      </div>
+      <div class="pt-3 mt-3 border-t border-primary-100">
+        <p class="text-[11px] text-ink/40 leading-relaxed">Duit Tracker stores everything on this device using IndexedDB. No internet connection is required. Export a backup regularly, especially before switching devices.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-24 left-1/2 -translate-x-1/2 bg-ink text-white text-sm rounded-full shadow-lg opacity-0 pointer-events-none transition-opacity z-50 max-w-[90%] flex items-center gap-3 pl-4 pr-2 py-2">
+  <span id="toast-message" class="truncate"></span>
+  <button id="toast-undo-btn" class="hidden shrink-0 text-xs font-bold uppercase tracking-wide text-primary-100 px-2.5 py-1 rounded-full active:bg-white/10">Undo</button>
+</div>
+
+<script src="js/i18n.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+  * { -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Inter', sans-serif; background:#F7F5F0; }
+  .font-display { font-family: 'Space Grotesk', sans-serif; }
+  ::-webkit-scrollbar { display:none; }
+  .no-scrollbar { -ms-overflow-style:none; scrollbar-width:none; }
+  .view { display:none; }
+  .view.active { display:block; }
+  .modal-backdrop { background: rgba(11,59,52,0.45); backdrop-filter: blur(2px); }
+  .sheet { transition: transform 0.28s cubic-bezier(.4,0,.2,1); }
+  .tab-btn.active-tab { color:#5E1220; }
+  .tab-btn.active-tab .tab-icon { background:#F1DEE1; }
+  input:focus, select:focus, textarea:focus { outline:2px solid #7A1B29; outline-offset:1px; }
+  .batik-pattern {
+    background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 2px, transparent 2px, transparent 18px),
+                       repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 2px, transparent 2px, transparent 18px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  /* ===================== DARK MODE ===================== *
+   * Overrides the existing utility classes' computed styles when the
+   * `dark` class is present on <html>. This avoids needing to add dark:
+   * variants to every element — same class names, different colors.
+   * The one exception is .bg-ink, used only for the toast pill, which is
+   * intentionally left unchanged so it stays a solid dark chip in both
+   * themes (dark text on a light chip in dark mode would be low-contrast). */
+  html.dark body { background:#1A1214; }
+  html.dark .bg-bg { background-color:#1A1214 !important; }
+  html.dark .bg-bg\/90 { background-color:rgba(26,18,20,0.9) !important; }
+  html.dark .bg-white { background-color:#241A1D !important; }
+  html.dark .bg-ink\/5 { background-color:rgba(240,230,231,0.06) !important; }
+  html.dark .border-bg { border-color:#1A1214 !important; }
+
+  html.dark .text-ink { color:#F0E6E7 !important; }
+  html.dark .text-ink\/25 { color:rgba(240,230,231,.25) !important; }
+  html.dark .text-ink\/35 { color:rgba(240,230,231,.35) !important; }
+  html.dark .text-ink\/40 { color:rgba(240,230,231,.40) !important; }
+  html.dark .text-ink\/45 { color:rgba(240,230,231,.45) !important; }
+  html.dark .text-ink\/50 { color:rgba(240,230,231,.50) !important; }
+  html.dark .text-ink\/60 { color:rgba(240,230,231,.60) !important; }
+  html.dark .text-ink\/70 { color:rgba(240,230,231,.70) !important; }
+  html.dark .text-ink\/80 { color:rgba(240,230,231,.80) !important; }
+
+  html.dark .bg-primary-100 { background-color:#3A2229 !important; }
+  html.dark .bg-primary-50 { background-color:#251619 !important; }
+  html.dark .bg-primary-700 { background-color:#8C3245 !important; }
+  html.dark .border-primary-100 { border-color:#3A272B !important; }
+  html.dark .border-primary-100\/60 { border-color:rgba(58,39,43,.6) !important; }
+  html.dark .border-primary-200 { border-color:#4A2A30 !important; }
+  html.dark .border-primary-500 { border-color:#C0475A !important; }
+  html.dark .border-primary-700 { border-color:#D66478 !important; }
+  html.dark .text-primary-600 { color:#E08A9A !important; }
+  html.dark .text-primary-700 { color:#E08A9A !important; }
+
+  html.dark .bg-emerald-50 { background-color:rgba(5,150,105,.12) !important; }
+  html.dark .bg-rose-50 { background-color:rgba(225,29,72,.12) !important; }
+  html.dark .bg-emerald-100 { background-color:rgba(5,150,105,.2) !important; }
+  html.dark .bg-rose-100 { background-color:rgba(225,29,72,.2) !important; }
+  html.dark .bg-emerald-200 { background-color:rgba(5,150,105,.32) !important; }
+  html.dark .bg-rose-200 { background-color:rgba(225,29,72,.32) !important; }
+  html.dark .border-emerald-300 { border-color:rgba(52,211,153,.5) !important; }
+  html.dark .border-rose-300 { border-color:rgba(251,113,133,.5) !important; }
+  html.dark .border-emerald-400 { border-color:rgba(52,211,153,.7) !important; }
+  html.dark .border-rose-400 { border-color:rgba(251,113,133,.7) !important; }
+  html.dark .bg-danger\/5 { background-color:rgba(179,38,30,.12) !important; }
+
+  html.dark .modal-backdrop { background: rgba(0,0,0,0.6); }
+  html.dark input:focus, html.dark select:focus, html.dark textarea:focus { outline-color:#C0475A; }
+  html.dark ::placeholder { color:rgba(240,230,231,.35); }
+
+  /* ===================== PIN LOCK ===================== *
+   * Class-based visibility (rather than inline JS show/hide) means the
+   * lock state is already correct the instant CSS applies, before any
+   * script has a chance to run — so locked users never glimpse app data. */
+  #lock-screen { display:none; }
+  html.pin-locked #app { display:none; }
+  html.pin-locked #lock-screen { display:flex; }
+
+  /* Utilities used by newer features that aren't in the precompiled Tailwind build */
+  .bg-emerald-600 { background-color:#059669; }
+  button:disabled { cursor:not-allowed; }
