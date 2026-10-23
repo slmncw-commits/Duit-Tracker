@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed variant for Android adaptive icons: the launcher crops it
+       to a circle/squircle, so the wallet glyph sits inside the central
+       80% safe zone. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3D0C14"/>
+      <stop offset="1" stop-color="#7A1B29"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <g transform="translate(256 262) scale(0.78) translate(-256 -262)">
+    <rect x="120" y="170" width="272" height="184" rx="28" fill="none" stroke="#F1DEE1" stroke-width="28"/>
+    <path d="M120 230h272" stroke="#F1DEE1" stroke-width="28"/>
+    <circle cx="330" cy="292" r="18" fill="#F1DEE1"/>
+  </g>
+</svg>

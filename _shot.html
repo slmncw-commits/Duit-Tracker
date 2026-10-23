@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style></head>
+<body><iframe id="f" src="index.html"></iframe>
+<script>
+// Temporary helper for store screenshots: seeds demo data into the app's
+// own IndexedDB (same origin), reloads it, and opens the requested view.
+const view = new URLSearchParams(location.search).get('view') || 'home-view';
+const lang = new URLSearchParams(location.search).get('lang') || 'en';
+const f = document.getElementById('f');
+const wait = ms => new Promise(r => setTimeout(r, ms));
+let seeded = false;
+f.addEventListener('load', async () => {
+  const w = f.contentWindow;
+  for (let i = 0; i < 50 && !w.db; i++) await wait(100);
+  await wait(300);
+  if (!seeded && w.accounts.length === 0) {
+    seeded = true;
+    w.localStorage.setItem('duitku-last-backup', String(Date.now()));
+    w.localStorage.setItem('duitku-lang', lang);
+    const now = new Date();
+    const d = (m, day, h) => w.toLocalDatetimeInput(new Date(now.getFullYear(), now.getMonth() + m, day, h || 12));
+    const acc = await w.idbAdd('accounts', { name: 'Maybank', initialBalance: 4200, monthlyBudget: 1800, createdAt: now.toISOString() });
+    await w.idbAdd('accounts', { name: 'Tabung', initialBalance: 1500, createdAt: now.toISOString() });
+    await w.loadAllData();
+    const c = n => w.categories.find(x => x.name === n).id;
+    const rows = [
+      [0, 1, 'income', 4800, 'Gaji Oktober', 'Salary'], [0, 3, 'expense', 42.5, 'Nasi lemak & kopi', 'Food'],
+      [0, 5, 'expense', 120, 'Bil TNB', 'Bills'], [0, 8, 'expense', 65, 'Petrol', 'Transport'],
+      [0, 12, 'expense', 230.9, 'Barang dapur', 'Shopping'], [0, 15, 'expense', 38, 'Grab', 'Transport'],
+      [0, 18, 'expense', 88, 'Makan malam keluarga', 'Food'], [0, Math.max(1, now.getDate() - 1), 'expense', 15.8, 'Kopi', 'Food'],
+      [-1, 1, 'income', 4800, 'Gaji', 'Salary'], [-1, 4, 'expense', 380, 'Barang dapur', 'Shopping'],
+      [-1, 9, 'expense', 140, 'Petrol', 'Transport'], [-1, 14, 'expense', 210, 'Makan', 'Food'],
+      [-2, 6, 'expense', 520, 'Kedai', 'Shopping'], [-3, 6, 'expense', 610, 'Kedai', 'Shopping'],
+      [-4, 6, 'expense', 450, 'Kedai', 'Shopping'], [-5, 6, 'expense', 700, 'Kedai', 'Shopping']
+    ];
+    for (const [m, day, type, amount, note, cat] of rows)
+      await w.idbAdd('transactions', { accountId: acc, type, amount, datetime: d(m, day), note, categoryId: c(cat), receipts: [] });
+    await w.idbAdd('categoryBudgets', { accountId: acc, categoryId: c('Food'), limit: 400 });
+    await w.idbAdd('categoryBudgets', { accountId: acc, categoryId: c('Transport'), limit: 200 });
+    const soon = new Date(now.getTime() + 2 * 864e5); soon.setHours(9, 0, 0, 0);
+    await w.idbAdd('recurring', { accountId: acc, type: 'expense', amount: 1200, note: 'Sewa rumah', frequency: 'monthly', time: '09:00', dayOfMonth: soon.getDate(), dayOfWeek: 1, categoryId: c('Rent'), nextRun: soon.toISOString() });
+    const later = new Date(now.getTime() + 5 * 864e5); later.setHours(9, 0, 0, 0);
+    await w.idbAdd('recurring', { accountId: acc, type: 'expense', amount: 129, note: 'Unifi', frequency: 'monthly', time: '09:00', dayOfMonth: later.getDate(), dayOfWeek: 1, categoryId: c('Bills'), nextRun: later.toISOString() });
+    await w.idbAdd('goals', { name: 'Tabung Raya', target: 3000, saved: 1150, deadline: `${now.getFullYear() + 1}-03-15`, createdAt: now.toISOString() });
+    f.src = 'index.html';
+    return;
+  }
+  w.switchView(view);
+  const t = w.document.getElementById('toast'); if (t) t.style.display = 'none';
+  document.title = 'ready';
+});
+</script></body></html>
