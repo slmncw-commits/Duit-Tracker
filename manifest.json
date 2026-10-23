@@ -1,0 +1,31 @@
+{
+  "name": "Duit Tracker",
+  "short_name": "Duit Tracker",
+  "description": "Personal finance tracker that keeps all data on your device.",
+  "start_url": "/",
+  "id": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F7F5F0",
+  "theme_color": "#5E1220",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { 
+      "src": "icon.svg", 
+      "sizes": "any", 
+      "type": "image/svg+xml", 
+      "purpose": "any" 
+    },
+    {
+      "src": "launchericon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "launchericon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
